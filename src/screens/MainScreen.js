@@ -269,7 +269,7 @@ const MainScreen = ({ navigation }) => {
               styles.exportButtonText,
               !item.completed && styles.exportButtonTextDisabled
             ]}>
-              📊 ወደ ውጭ ላክ
+              📊 ያጋሩ
             </Text>
           </TouchableOpacity>
           <TouchableOpacity

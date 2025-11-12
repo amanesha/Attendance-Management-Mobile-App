@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import {
   View,
   Text,
@@ -12,6 +12,7 @@ import {
   Switch,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
+import { useFocusEffect } from '@react-navigation/native';
 import {
   getActiveSession,
   addIdAttendance,
@@ -50,6 +51,12 @@ const AttendanceEntryScreen = ({ navigation }) => {
     loadEmployees();
   }, []);
 
+  useFocusEffect(
+    useCallback(() => {
+      loadEmployees();
+    }, [])
+  );
+
   const loadEmployees = async () => {
     const employees = await getAllEmployees();
     const map = {};
@@ -75,11 +82,12 @@ const AttendanceEntryScreen = ({ navigation }) => {
   const handleIdChange = async (text) => {
     setId(text);
 
-    // Search for matching IDs
+    // Search for matching IDs and phone numbers
     if (text.trim().length > 0) {
       const employees = await getAllEmployees();
       const matches = employees.filter(emp =>
-        emp.id && emp.id.toLowerCase().includes(text.trim().toLowerCase())
+        (emp.id && emp.id.toLowerCase().includes(text.trim().toLowerCase())) ||
+        (emp.phoneNumber && emp.phoneNumber.includes(text.trim()))
       ).slice(0, 5); // Limit to 5 suggestions
       setIdSuggestions(matches);
     } else {
@@ -87,10 +95,17 @@ const AttendanceEntryScreen = ({ navigation }) => {
     }
   };
 
-  const handleSelectIdSuggestion = (employee) => {
-    setId(employee.id);
+  const handleSelectIdSuggestion = async (employee) => {
     setIdSuggestions([]);
-    handleAddAttendance();
+    // Directly add attendance with the employee's ID to avoid async state issues
+    const success = await addIdAttendance(employee.id);
+    if (success) {
+      setId('');
+      await loadSession();
+      await loadEmployees();
+    } else {
+      Alert.alert('Error', 'Failed to add attendance');
+    }
   };
 
   const handlePhoneChange = async (text) => {
@@ -135,6 +150,7 @@ const AttendanceEntryScreen = ({ navigation }) => {
         setPhoneNumber('');
         setPhoneSuggestions([]);
         await loadSession();
+        await loadEmployees();
       } else {
         Alert.alert('Error', 'Failed to add attendance');
       }
@@ -150,6 +166,7 @@ const AttendanceEntryScreen = ({ navigation }) => {
         setId('');
         setIdSuggestions([]);
         await loadSession();
+        await loadEmployees();
       } else {
         Alert.alert('Error', 'Failed to add attendance');
       }
@@ -323,31 +340,28 @@ const AttendanceEntryScreen = ({ navigation }) => {
       >
       <ScrollView style={styles.scrollView} keyboardShouldPersistTaps="handled">
         <View style={styles.header}>
-          <Text style={styles.headerTitle}>Mark Attendance</Text>
-          <Text style={styles.headerDate}>
-            {new Date(session.date).toLocaleDateString()}
-          </Text>
-          <View style={styles.statsRow}>
-            <View style={styles.statBox}>
-              <Text style={styles.statNumber}>{session.idAttendance.length}</Text>
-              <Text style={styles.statLabel}>With ID</Text>
+          <View style={styles.headerTop}>
+            <View>
+              <Text style={styles.headerTitle}>Mark Attendance</Text>
+              <Text style={styles.headerDate}>
+                {new Date(session.date).toLocaleDateString()}
+              </Text>
             </View>
-            <View style={styles.statBox}>
-              <Text style={styles.statNumber}>{session.forgotIdAttendance.length}</Text>
-              <Text style={styles.statLabel}>Forgot ID</Text>
-            </View>
-            <View style={[styles.statBox, styles.totalStat]}>
-              <Text style={styles.statNumberTotal}>
+            <View style={styles.headerStats}>
+              <Text style={styles.totalNumber}>
                 {session.idAttendance.length + session.forgotIdAttendance.length}
               </Text>
-              <Text style={styles.statLabelTotal}>Total</Text>
+              <Text style={styles.totalLabel}>Present</Text>
             </View>
           </View>
         </View>
 
         <View style={styles.formContainer}>
           <View style={styles.toggleContainer}>
-            <Text style={styles.toggleLabel}>Forgot ID?</Text>
+            <View style={styles.toggleTextContainer}>
+              <Text style={styles.toggleLabel}>Student/Employee Forgot ID?</Text>
+              <Text style={styles.toggleHint}>Switch to manual entry</Text>
+            </View>
             <Switch
               value={forgotId}
               onValueChange={setForgotId}
@@ -358,14 +372,14 @@ const AttendanceEntryScreen = ({ navigation }) => {
 
           {!forgotId ? (
             <View style={styles.inputGroup}>
-              <Text style={styles.label}>Student/Employee ID</Text>
+              <Text style={styles.label}>Student/Employee ID or Phone</Text>
+              <Text style={styles.labelHint}>Type ID or phone number to search</Text>
               <TextInput
                 style={styles.input}
                 value={id}
                 onChangeText={handleIdChange}
-                placeholder="Enter ID"
+                placeholder="Enter ID or Phone Number"
                 placeholderTextColor="#94a3b8"
-                keyboardType="numeric"
                 returnKeyType="done"
                 onSubmitEditing={handleAddAttendance}
               />
@@ -382,9 +396,12 @@ const AttendanceEntryScreen = ({ navigation }) => {
                       onPress={() => handleSelectIdSuggestion(employee)}
                     >
                       <View style={styles.suggestionLeft}>
-                        <Text style={styles.suggestionId}>{employee.id}</Text>
+                        <Text style={styles.suggestionId}>ID: {employee.id}</Text>
                         <Text style={styles.suggestionName}>{employee.fullName}</Text>
                         <Text style={styles.suggestionDept}>{employee.department}</Text>
+                        {employee.phoneNumber && (
+                          <Text style={styles.suggestionPhone}>Phone: {employee.phoneNumber}</Text>
+                        )}
                       </View>
                       <Text style={styles.suggestionArrow}>→</Text>
                     </TouchableOpacity>
@@ -464,7 +481,8 @@ const AttendanceEntryScreen = ({ navigation }) => {
             style={styles.addButton}
             onPress={handleAddAttendance}
           >
-            <Text style={styles.addButtonText}>+ Add Attendance</Text>
+            <Text style={styles.addButtonIcon}>✓</Text>
+            <Text style={styles.addButtonText}>Mark Present</Text>
           </TouchableOpacity>
         </View>
 
@@ -472,7 +490,7 @@ const AttendanceEntryScreen = ({ navigation }) => {
         {session.idAttendance.length > 0 && (
           <View style={styles.listSection}>
             <Text style={styles.listTitle}>
-              With ID ({session.idAttendance.length})
+              ✓ Marked Present - With ID ({session.idAttendance.length})
             </Text>
             {session.idAttendance.map((item, index) => (
               <View key={index} style={styles.listItem}>
@@ -547,7 +565,7 @@ const AttendanceEntryScreen = ({ navigation }) => {
         {session.forgotIdAttendance.length > 0 && (
           <View style={styles.listSection}>
             <Text style={styles.listTitle}>
-              Forgot ID ({session.forgotIdAttendance.length})
+              ✓ Marked Present - No ID ({session.forgotIdAttendance.length})
             </Text>
             {session.forgotIdAttendance.map((item, index) => (
               <View key={index} style={styles.listItem}>
@@ -637,8 +655,12 @@ const AttendanceEntryScreen = ({ navigation }) => {
 
         <View style={styles.actionContainer}>
           <TouchableOpacity style={styles.finishButton} onPress={handleFinish}>
-            <Text style={styles.finishButtonText}>✓ Finish Session</Text>
+            <Text style={styles.finishButtonIcon}>✓</Text>
+            <Text style={styles.finishButtonText}>Complete Session</Text>
           </TouchableOpacity>
+          <Text style={styles.finishHint}>
+            Completing will save and close this session
+          </Text>
         </View>
 
         <View style={styles.bottomPadding} />
@@ -668,56 +690,39 @@ const styles = StyleSheet.create({
   },
   header: {
     backgroundColor: '#1e3a8a',
-    paddingTop: 20,
-    paddingBottom: 30,
-    paddingHorizontal: 20,
+    paddingVertical: 12,
+    paddingHorizontal: 16,
   },
-  headerTitle: {
-    fontSize: 28,
-    fontWeight: 'bold',
-    color: '#ffffff',
-    marginBottom: 4,
-  },
-  headerDate: {
-    fontSize: 14,
-    color: '#93c5fd',
-    marginBottom: 20,
-  },
-  statsRow: {
+  headerTop: {
     flexDirection: 'row',
     justifyContent: 'space-between',
-  },
-  statBox: {
-    flex: 1,
-    backgroundColor: 'rgba(255, 255, 255, 0.1)',
-    borderRadius: 12,
-    padding: 12,
     alignItems: 'center',
-    marginHorizontal: 4,
   },
-  totalStat: {
+  headerTitle: {
+    fontSize: 18,
+    fontWeight: 'bold',
+    color: '#ffffff',
+    marginBottom: 2,
+  },
+  headerDate: {
+    fontSize: 12,
+    color: '#93c5fd',
+  },
+  headerStats: {
+    alignItems: 'center',
     backgroundColor: '#3b82f6',
+    borderRadius: 8,
+    paddingHorizontal: 16,
+    paddingVertical: 8,
   },
-  statNumber: {
+  totalNumber: {
     fontSize: 24,
     fontWeight: 'bold',
     color: '#ffffff',
   },
-  statNumberTotal: {
-    fontSize: 28,
-    fontWeight: 'bold',
-    color: '#ffffff',
-  },
-  statLabel: {
+  totalLabel: {
     fontSize: 11,
     color: '#dbeafe',
-    marginTop: 4,
-  },
-  statLabelTotal: {
-    fontSize: 12,
-    color: '#ffffff',
-    marginTop: 4,
-    fontWeight: '600',
   },
   formContainer: {
     backgroundColor: '#ffffff',
@@ -736,13 +741,23 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     marginBottom: 20,
     paddingBottom: 20,
+    paddingTop: 4,
     borderBottomWidth: 1,
     borderBottomColor: '#e2e8f0',
+  },
+  toggleTextContainer: {
+    flex: 1,
   },
   toggleLabel: {
     fontSize: 16,
     fontWeight: '600',
     color: '#1e293b',
+    marginBottom: 2,
+  },
+  toggleHint: {
+    fontSize: 12,
+    color: '#64748b',
+    marginTop: 2,
   },
   inputGroup: {
     marginBottom: 16,
@@ -751,7 +766,13 @@ const styles = StyleSheet.create({
     fontSize: 14,
     fontWeight: '600',
     color: '#1e293b',
+    marginBottom: 4,
+  },
+  labelHint: {
+    fontSize: 12,
+    color: '#64748b',
     marginBottom: 8,
+    fontStyle: 'italic',
   },
   optional: {
     fontSize: 12,
@@ -780,9 +801,10 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
-    padding: 12,
+    padding: 14,
     borderBottomWidth: 1,
     borderBottomColor: '#e2e8f0',
+    backgroundColor: '#ffffff',
   },
   suggestionLeft: {
     flex: 1,
@@ -803,6 +825,11 @@ const styles = StyleSheet.create({
     fontSize: 13,
     color: '#64748b',
   },
+  suggestionPhone: {
+    fontSize: 12,
+    color: '#10b981',
+    marginTop: 2,
+  },
   suggestionArrow: {
     fontSize: 20,
     color: '#3b82f6',
@@ -810,10 +837,23 @@ const styles = StyleSheet.create({
   },
   addButton: {
     backgroundColor: '#10b981',
-    borderRadius: 8,
+    borderRadius: 12,
     padding: 16,
+    flexDirection: 'row',
     alignItems: 'center',
+    justifyContent: 'center',
     marginTop: 8,
+    shadowColor: '#10b981',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.3,
+    shadowRadius: 4,
+    elevation: 3,
+  },
+  addButtonIcon: {
+    color: '#ffffff',
+    fontSize: 20,
+    fontWeight: 'bold',
+    marginRight: 8,
   },
   addButtonText: {
     color: '#ffffff',
@@ -1014,17 +1054,32 @@ const styles = StyleSheet.create({
     backgroundColor: '#3b82f6',
     borderRadius: 12,
     padding: 18,
+    flexDirection: 'row',
     alignItems: 'center',
+    justifyContent: 'center',
     shadowColor: '#3b82f6',
     shadowOffset: { width: 0, height: 4 },
     shadowOpacity: 0.3,
     shadowRadius: 8,
     elevation: 6,
   },
+  finishButtonIcon: {
+    color: '#ffffff',
+    fontSize: 22,
+    fontWeight: 'bold',
+    marginRight: 8,
+  },
   finishButtonText: {
     color: '#ffffff',
     fontSize: 18,
     fontWeight: 'bold',
+  },
+  finishHint: {
+    fontSize: 12,
+    color: '#64748b',
+    textAlign: 'center',
+    marginTop: 8,
+    fontStyle: 'italic',
   },
   bottomPadding: {
     height: 40,

@@ -18,10 +18,7 @@ import {
   createSession,
   setActiveSession,
   deleteSession,
-  saveEmployees,
-  getAllEmployees,
 } from '../utils/storage';
-import * as DocumentPicker from 'expo-document-picker';
 import {
   ethiopianMonths,
   gregorianToEthiopian,
@@ -222,67 +219,6 @@ const MainScreen = ({ navigation }) => {
     return date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
   };
 
-  const handleUploadExcel = async () => {
-    try {
-      const result = await DocumentPicker.getDocumentAsync({
-        type: [
-          'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
-          'application/vnd.ms-excel'
-        ],
-        copyToCacheDirectory: true,
-      });
-
-      if (result.canceled) {
-        return;
-      }
-
-      const fileUri = result.assets[0].uri;
-      const fileContent = await FileSystem.readAsStringAsync(fileUri, {
-        encoding: 'base64',
-      });
-
-      // Parse Excel file
-      const workbook = XLSX.read(fileContent, { type: 'base64' });
-      const sheetName = workbook.SheetNames[0];
-      const worksheet = workbook.Sheets[sheetName];
-      const jsonData = XLSX.utils.sheet_to_json(worksheet);
-
-      // Transform data to match our structure
-      // Expected columns: NameAmharic, Full Name, Phone, ID, Department
-      const employees = jsonData.map((row) => ({
-        id: String(row.ID || row.id || '').trim(),
-        nameAmharic: String(row.NameAmharic || row['Name Amharic'] || '').trim(),
-        fullName: String(row['Full Name'] || row.FullName || row.Name || '').trim(),
-        phoneNumber: String(row.Phone || row.PhoneNumber || row['Phone Number'] || '').trim(),
-        department: String(row.Department || row.Dept || '').trim(),
-      })).filter(emp => emp.id || emp.phoneNumber); // Keep only valid records
-
-      if (employees.length === 0) {
-        Alert.alert('ስህተት', 'የተሳካ መረጃ ከማግኘት አልተቻለም። እባክዎ ፋይሉን ያረጋግጡ።\n\nError: No valid data found in Excel file.');
-        return;
-      }
-
-      // Save to database
-      const success = await saveEmployees(employees);
-
-      if (success) {
-        Alert.alert(
-          'ተሳክቷል!',
-          `${employees.length} ሰራተኞች/ተማሪዎች ተጭነዋል።\n\n${employees.length} employees/students imported successfully!`,
-          [{ text: 'እሺ' }]
-        );
-      } else {
-        Alert.alert('ስህተት', 'መረጃን ማስቀመጥ አልተቻለም።\n\nFailed to save data.');
-      }
-    } catch (error) {
-      console.error('Upload error:', error);
-      Alert.alert(
-        'የማስመጣት ስህተት',
-        error.message || 'ፋይሉን ማስመጣት አልተቻለም። እባክዎ እንደገና ይሞክሩ።\n\nFailed to import file. Please try again.'
-      );
-    }
-  };
-
   const renderSession = ({ item }) => {
     const totalCount = item.idAttendance.length + item.forgotIdAttendance.length;
     // Show creation time for in-progress, completion time for finished sessions
@@ -333,7 +269,7 @@ const MainScreen = ({ navigation }) => {
               styles.exportButtonText,
               !item.completed && styles.exportButtonTextDisabled
             ]}>
-              📊 ያጋሩ
+              {item.completed ? '📊 ያጋሩ' : '🔒 በሂደት ላይ'}
             </Text>
           </TouchableOpacity>
           <TouchableOpacity
@@ -359,24 +295,17 @@ const MainScreen = ({ navigation }) => {
         {/* Action Buttons */}
         <View style={styles.actionButtonsRow}>
           <TouchableOpacity
-            style={[styles.actionButton, styles.uploadButton]}
-            onPress={handleUploadExcel}
-          >
-            <Text style={styles.actionButtonText}>📂 Upload</Text>
-          </TouchableOpacity>
-
-          <TouchableOpacity
             style={[styles.actionButton, styles.manageButton]}
             onPress={() => navigation.navigate('EmployeeManagement')}
           >
-            <Text style={styles.actionButtonText}>👥 Manage</Text>
+            <Text style={styles.actionButtonText}>👥 Manage Database</Text>
           </TouchableOpacity>
 
           <TouchableOpacity
             style={[styles.actionButton, styles.reportButton]}
             onPress={() => navigation.navigate('Report')}
           >
-            <Text style={styles.actionButtonText}>📊 Report</Text>
+            <Text style={styles.actionButtonText}>📊 View Report</Text>
           </TouchableOpacity>
         </View>
       </View>
@@ -830,11 +759,11 @@ const styles = StyleSheet.create({
     fontWeight: '600',
   },
   exportButtonDisabled: {
-    backgroundColor: '#94a3b8',
-    opacity: 0.5,
+    backgroundColor: '#f59e0b',
+    opacity: 1,
   },
   exportButtonTextDisabled: {
-    color: '#cbd5e1',
+    color: '#ffffff',
   },
   downloadButton: {
     flex: 1,

@@ -21,6 +21,9 @@ import {
   deleteForgotIdAttendance,
   updateIdAttendance,
   updateForgotIdAttendance,
+  getEmployeeById,
+  getEmployeeByPhone,
+  getAllEmployees,
 } from '../utils/storage';
 
 const AttendanceEntryScreen = ({ navigation }) => {
@@ -38,10 +41,25 @@ const AttendanceEntryScreen = ({ navigation }) => {
     department: '',
     phoneNumber: '',
   });
+  const [idSuggestions, setIdSuggestions] = useState([]);
+  const [phoneSuggestions, setPhoneSuggestions] = useState([]);
+  const [employeeMap, setEmployeeMap] = useState({});
 
   useEffect(() => {
     loadSession();
+    loadEmployees();
   }, []);
+
+  const loadEmployees = async () => {
+    const employees = await getAllEmployees();
+    const map = {};
+    employees.forEach(emp => {
+      if (emp.id) {
+        map[emp.id] = emp;
+      }
+    });
+    setEmployeeMap(map);
+  };
 
   const loadSession = async () => {
     const activeSession = await getActiveSession();
@@ -52,6 +70,49 @@ const AttendanceEntryScreen = ({ navigation }) => {
         { text: 'OK', onPress: () => navigation.goBack() },
       ]);
     }
+  };
+
+  const handleIdChange = async (text) => {
+    setId(text);
+
+    // Search for matching IDs
+    if (text.trim().length > 0) {
+      const employees = await getAllEmployees();
+      const matches = employees.filter(emp =>
+        emp.id && emp.id.toLowerCase().includes(text.trim().toLowerCase())
+      ).slice(0, 5); // Limit to 5 suggestions
+      setIdSuggestions(matches);
+    } else {
+      setIdSuggestions([]);
+    }
+  };
+
+  const handleSelectIdSuggestion = (employee) => {
+    setId(employee.id);
+    setIdSuggestions([]);
+    handleAddAttendance();
+  };
+
+  const handlePhoneChange = async (text) => {
+    setPhoneNumber(text);
+
+    // Search for matching phone numbers
+    if (text.trim().length >= 3) {
+      const employees = await getAllEmployees();
+      const matches = employees.filter(emp =>
+        emp.phoneNumber && emp.phoneNumber.includes(text.trim())
+      ).slice(0, 5); // Limit to 5 suggestions
+      setPhoneSuggestions(matches);
+    } else {
+      setPhoneSuggestions([]);
+    }
+  };
+
+  const handleSelectPhoneSuggestion = (employee) => {
+    setPhoneNumber(employee.phoneNumber);
+    setFullName(employee.fullName);
+    setDepartment(employee.department);
+    setPhoneSuggestions([]);
   };
 
   const handleAddAttendance = async () => {
@@ -72,6 +133,7 @@ const AttendanceEntryScreen = ({ navigation }) => {
         setFullName('');
         setDepartment('');
         setPhoneNumber('');
+        setPhoneSuggestions([]);
         await loadSession();
       } else {
         Alert.alert('Error', 'Failed to add attendance');
@@ -86,6 +148,7 @@ const AttendanceEntryScreen = ({ navigation }) => {
 
       if (success) {
         setId('');
+        setIdSuggestions([]);
         await loadSession();
       } else {
         Alert.alert('Error', 'Failed to add attendance');
@@ -299,13 +362,35 @@ const AttendanceEntryScreen = ({ navigation }) => {
               <TextInput
                 style={styles.input}
                 value={id}
-                onChangeText={setId}
+                onChangeText={handleIdChange}
                 placeholder="Enter ID"
                 placeholderTextColor="#94a3b8"
                 keyboardType="numeric"
                 returnKeyType="done"
                 onSubmitEditing={handleAddAttendance}
               />
+              {idSuggestions.length > 0 && (
+                <ScrollView
+                  style={styles.suggestionsContainer}
+                  nestedScrollEnabled={true}
+                  keyboardShouldPersistTaps="handled"
+                >
+                  {idSuggestions.map((employee, index) => (
+                    <TouchableOpacity
+                      key={index}
+                      style={styles.suggestionItem}
+                      onPress={() => handleSelectIdSuggestion(employee)}
+                    >
+                      <View style={styles.suggestionLeft}>
+                        <Text style={styles.suggestionId}>{employee.id}</Text>
+                        <Text style={styles.suggestionName}>{employee.fullName}</Text>
+                        <Text style={styles.suggestionDept}>{employee.department}</Text>
+                      </View>
+                      <Text style={styles.suggestionArrow}>→</Text>
+                    </TouchableOpacity>
+                  ))}
+                </ScrollView>
+              )}
             </View>
           ) : (
             <>
@@ -344,11 +429,33 @@ const AttendanceEntryScreen = ({ navigation }) => {
                 <TextInput
                   style={styles.input}
                   value={phoneNumber}
-                  onChangeText={setPhoneNumber}
+                  onChangeText={handlePhoneChange}
                   placeholder="Enter phone number"
                   placeholderTextColor="#94a3b8"
                   keyboardType="phone-pad"
                 />
+                {phoneSuggestions.length > 0 && (
+                  <ScrollView
+                    style={styles.suggestionsContainer}
+                    nestedScrollEnabled={true}
+                    keyboardShouldPersistTaps="handled"
+                  >
+                    {phoneSuggestions.map((employee, index) => (
+                      <TouchableOpacity
+                        key={index}
+                        style={styles.suggestionItem}
+                        onPress={() => handleSelectPhoneSuggestion(employee)}
+                      >
+                        <View style={styles.suggestionLeft}>
+                          <Text style={styles.suggestionId}>{employee.phoneNumber}</Text>
+                          <Text style={styles.suggestionName}>{employee.fullName}</Text>
+                          <Text style={styles.suggestionDept}>{employee.department}</Text>
+                        </View>
+                        <Text style={styles.suggestionArrow}>→</Text>
+                      </TouchableOpacity>
+                    ))}
+                  </ScrollView>
+                )}
               </View>
             </>
           )}
@@ -402,8 +509,16 @@ const AttendanceEntryScreen = ({ navigation }) => {
                   <View style={styles.listItemRow}>
                     <View style={styles.listItemLeft}>
                       <Text style={styles.listItemNumber}>{index + 1}</Text>
-                      <View>
-                        <Text style={styles.listItemId}>{item.id}</Text>
+                      <View style={styles.attendanceDetails}>
+                        <Text style={styles.listItemId}>ID: {item.id}</Text>
+                        {employeeMap[item.id] ? (
+                          <>
+                            <Text style={styles.listItemName}>{employeeMap[item.id].fullName}</Text>
+                            <Text style={styles.listItemDetail}>{employeeMap[item.id].department}</Text>
+                          </>
+                        ) : (
+                          <Text style={styles.listItemNotFound}>Not in database</Text>
+                        )}
                         <Text style={styles.listItemTime}>{formatTime(item.timestamp)}</Text>
                       </View>
                     </View>
@@ -652,6 +767,47 @@ const styles = StyleSheet.create({
     borderColor: '#e2e8f0',
     color: '#1e293b',
   },
+  suggestionsContainer: {
+    backgroundColor: '#ffffff',
+    borderRadius: 8,
+    marginTop: 8,
+    borderWidth: 1,
+    borderColor: '#cbd5e1',
+    maxHeight: 200,
+    overflow: 'hidden',
+  },
+  suggestionItem: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    padding: 12,
+    borderBottomWidth: 1,
+    borderBottomColor: '#e2e8f0',
+  },
+  suggestionLeft: {
+    flex: 1,
+  },
+  suggestionId: {
+    fontSize: 14,
+    fontWeight: '600',
+    color: '#3b82f6',
+    marginBottom: 2,
+  },
+  suggestionName: {
+    fontSize: 15,
+    fontWeight: '600',
+    color: '#1e293b',
+    marginBottom: 2,
+  },
+  suggestionDept: {
+    fontSize: 13,
+    color: '#64748b',
+  },
+  suggestionArrow: {
+    fontSize: 20,
+    color: '#3b82f6',
+    marginLeft: 8,
+  },
   addButton: {
     backgroundColor: '#10b981',
     borderRadius: 8,
@@ -707,14 +863,17 @@ const styles = StyleSheet.create({
     marginRight: 12,
     minWidth: 24,
   },
+  attendanceDetails: {
+    flex: 1,
+  },
   listItemId: {
-    fontSize: 16,
+    fontSize: 14,
     fontWeight: '600',
-    color: '#1e293b',
-    marginBottom: 2,
+    color: '#3b82f6',
+    marginBottom: 4,
   },
   listItemName: {
-    fontSize: 16,
+    fontSize: 15,
     fontWeight: '600',
     color: '#1e293b',
     marginBottom: 2,
@@ -724,9 +883,16 @@ const styles = StyleSheet.create({
     color: '#64748b',
     marginTop: 2,
   },
+  listItemNotFound: {
+    fontSize: 12,
+    color: '#f59e0b',
+    fontStyle: 'italic',
+    marginTop: 2,
+  },
   listItemTime: {
     fontSize: 11,
     color: '#94a3b8',
+    marginTop: 4,
   },
   listItemTimeSmall: {
     fontSize: 11,

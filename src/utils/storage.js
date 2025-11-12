@@ -2,6 +2,8 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 
 const SESSIONS_KEY = '@attendance_sessions';
 const ACTIVE_SESSION_KEY = '@active_session';
+const EMPLOYEES_KEY = '@employees_database';
+const UPLOADS_KEY = '@employee_uploads';
 
 // Session Management
 export const getAllSessions = async () => {
@@ -273,6 +275,47 @@ export const updateForgotIdAttendance = async (index, userData) => {
   }
 };
 
+// Employee/Student Database Management
+export const saveEmployees = async (employees) => {
+  try {
+    await AsyncStorage.setItem(EMPLOYEES_KEY, JSON.stringify(employees));
+    return true;
+  } catch (error) {
+    console.error('Error saving employees:', error);
+    return false;
+  }
+};
+
+export const getAllEmployees = async () => {
+  try {
+    const data = await AsyncStorage.getItem(EMPLOYEES_KEY);
+    return data ? JSON.parse(data) : [];
+  } catch (error) {
+    console.error('Error getting employees:', error);
+    return [];
+  }
+};
+
+export const getEmployeeById = async (id) => {
+  try {
+    const employees = await getAllEmployees();
+    return employees.find(emp => emp.id === id) || null;
+  } catch (error) {
+    console.error('Error getting employee by ID:', error);
+    return null;
+  }
+};
+
+export const getEmployeeByPhone = async (phone) => {
+  try {
+    const employees = await getAllEmployees();
+    return employees.find(emp => emp.phoneNumber === phone) || null;
+  } catch (error) {
+    console.error('Error getting employee by phone:', error);
+    return null;
+  }
+};
+
 // Clear all data
 export const clearAllData = async () => {
   try {
@@ -281,6 +324,69 @@ export const clearAllData = async () => {
     return true;
   } catch (error) {
     console.error('Error clearing all data:', error);
+    return false;
+  }
+};
+
+// Employee Upload Management
+export const getAllUploads = async () => {
+  try {
+    const data = await AsyncStorage.getItem(UPLOADS_KEY);
+    return data ? JSON.parse(data) : [];
+  } catch (error) {
+    console.error('Error getting uploads:', error);
+    return [];
+  }
+};
+
+export const addUpload = async (employees, fileName = 'Database') => {
+  try {
+    const uploads = await getAllUploads();
+    const newUpload = {
+      id: Date.now().toString(),
+      fileName: fileName,
+      uploadDate: new Date().toISOString(),
+      employeeCount: employees.length,
+      employees: employees,
+    };
+    uploads.push(newUpload);
+    await AsyncStorage.setItem(UPLOADS_KEY, JSON.stringify(uploads));
+
+    // Also update the flat employee list for backward compatibility
+    const allEmployees = uploads.flatMap(u => u.employees);
+    await saveEmployees(allEmployees);
+
+    return newUpload;
+  } catch (error) {
+    console.error('Error adding upload:', error);
+    return null;
+  }
+};
+
+export const deleteUpload = async (uploadId) => {
+  try {
+    const uploads = await getAllUploads();
+    const filteredUploads = uploads.filter(u => u.id !== uploadId);
+    await AsyncStorage.setItem(UPLOADS_KEY, JSON.stringify(filteredUploads));
+
+    // Update the flat employee list
+    const allEmployees = filteredUploads.flatMap(u => u.employees);
+    await saveEmployees(allEmployees);
+
+    return true;
+  } catch (error) {
+    console.error('Error deleting upload:', error);
+    return false;
+  }
+};
+
+export const clearAllUploads = async () => {
+  try {
+    await AsyncStorage.removeItem(UPLOADS_KEY);
+    await AsyncStorage.removeItem(EMPLOYEES_KEY);
+    return true;
+  } catch (error) {
+    console.error('Error clearing uploads:', error);
     return false;
   }
 };

@@ -4,6 +4,8 @@ import { createStackNavigator } from '@react-navigation/stack';
 import SplashScreen from '../screens/SplashScreen';
 import MainScreen from '../screens/MainScreen';
 import AttendanceEntryScreen from '../screens/AttendanceEntryScreen';
+import ReportScreen from '../screens/ReportScreen';
+import EmployeeManagementScreen from '../screens/EmployeeManagementScreen';
 
 const Stack = createStackNavigator();
 
@@ -29,6 +31,20 @@ const AppNavigator = () => {
           headerTitleStyle: {
             fontWeight: 'bold',
           },
+        }}
+      />
+      <Stack.Screen
+        name="Report"
+        component={ReportScreen}
+        options={{
+          headerShown: false,
+        }}
+      />
+      <Stack.Screen
+        name="EmployeeManagement"
+        component={EmployeeManagementScreen}
+        options={{
+          headerShown: false,
         }}
       />
     </Stack.Navigator>

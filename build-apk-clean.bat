@@ -19,9 +19,11 @@ if /i not "%confirm%"=="Y" (
     exit /b 0
 )
 
-REM Set Java Home
+REM Set Java Home and Android SDK
 set JAVA_HOME=C:\Program Files\Android\Android Studio\jbr
-set PATH=%JAVA_HOME%\bin;%PATH%
+set ANDROID_HOME=C:\Users\%USERNAME%\AppData\Local\Android\Sdk
+set ANDROID_SDK_ROOT=%ANDROID_HOME%
+set PATH=%JAVA_HOME%\bin;%ANDROID_HOME%\platform-tools;%PATH%
 
 REM Check if android folder exists
 if not exist "%~dp0android" (

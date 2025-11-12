@@ -9,9 +9,11 @@ echo  AttendanceM Fast Release APK Builder
 echo ========================================
 echo.
 
-REM Set Java Home (Using Android Studio's JBR)
+REM Set Java Home and Android SDK (Using Android Studio's JBR and SDK)
 set JAVA_HOME=C:\Program Files\Android\Android Studio\jbr
-set PATH=%JAVA_HOME%\bin;%PATH%
+set ANDROID_HOME=C:\Users\%USERNAME%\AppData\Local\Android\Sdk
+set ANDROID_SDK_ROOT=%ANDROID_HOME%
+set PATH=%JAVA_HOME%\bin;%ANDROID_HOME%\platform-tools;%PATH%
 
 REM Check if Java is available
 java -version >nul 2>&1

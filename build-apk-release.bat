@@ -1,0 +1,71 @@
+@echo off
+REM ==================================================
+REM AttendanceM App - Release APK Builder
+REM ==================================================
+echo.
+echo ========================================
+echo  AttendanceM Release APK Builder
+echo ========================================
+echo.
+
+REM Set Java Home (Using Android Studio's JBR)
+set JAVA_HOME=C:\Program Files\Android\Android Studio\jbr
+set PATH=%JAVA_HOME%\bin;%PATH%
+
+REM Check if Java is available
+java -version >nul 2>&1
+if errorlevel 1 (
+    echo [ERROR] Java not found! Please install Android Studio or Java JDK 17.
+    pause
+    exit /b 1
+)
+
+echo [1/4] Java detected successfully!
+echo.
+
+REM Check if android folder exists, if not run prebuild
+if not exist "%~dp0android" (
+    echo [2/4] Android folder not found. Running prebuild...
+    call npx expo prebuild --platform android
+    echo.
+) else (
+    echo [2/4] Android folder found, skipping prebuild...
+    echo.
+)
+
+REM Navigate to android directory
+cd /d "%~dp0android"
+
+echo [3/4] Building Release APK...
+echo This may take a few minutes. Please wait...
+echo.
+
+REM Run Gradle build with clean (for production)
+call gradlew.bat clean assembleRelease
+
+if errorlevel 1 (
+    echo.
+    echo [ERROR] Build failed! Check the errors above.
+    pause
+    exit /b 1
+)
+
+echo.
+echo ========================================
+echo  BUILD SUCCESSFUL!
+echo ========================================
+echo.
+echo APK Location:
+echo %~dp0android\app\build\outputs\apk\release\app-release.apk
+echo.
+echo APK Size:
+for %%A in ("%~dp0android\app\build\outputs\apk\release\app-release.apk") do echo %%~zA bytes
+echo.
+
+REM [4/4] Open the output folder
+echo [4/4] Opening APK folder...
+start "" "%~dp0android\app\build\outputs\apk\release"
+
+echo.
+echo Press any key to exit...
+pause >nul

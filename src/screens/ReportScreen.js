@@ -10,17 +10,26 @@ import {
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { getAllSessions, getAllEmployees, getEmployeeById } from '../utils/storage';
-import { gregorianToEthiopian, ethiopianMonths } from '../utils/ethiopianCalendar';
+import { gregorianToEthiopian, ethiopianMonths, getDaysInEthiopianMonth, getEthiopianYears, getCurrentEthiopianDate } from '../utils/ethiopianCalendar';
 
 const ReportScreen = ({ navigation }) => {
   const [reportData, setReportData] = useState([]);
   const [sessions, setSessions] = useState([]);
   const [employees, setEmployees] = useState([]);
+
+  // Ethiopian date picker state (shared for filters)
+  const currentEthDate = getCurrentEthiopianDate();
+  const [ethYear, setEthYear] = useState(currentEthDate.year);
+  const [ethMonth, setEthMonth] = useState(currentEthDate.month);
+  const [ethDay, setEthDay] = useState(currentEthDate.day);
+  const [showEthYearPicker, setShowEthYearPicker] = useState(false);
+  const [showEthMonthPicker, setShowEthMonthPicker] = useState(false);
+  const [showEthDayPicker, setShowEthDayPicker] = useState(false);
+
+  // Filter state
   const [selectedYear, setSelectedYear] = useState(null);
   const [selectedMonth, setSelectedMonth] = useState(null);
-  const [availableYears, setAvailableYears] = useState([]);
-  const [showYearPicker, setShowYearPicker] = useState(false);
-  const [showMonthPicker, setShowMonthPicker] = useState(false);
+  const [selectedDay, setSelectedDay] = useState(null); // null means "All days"
   const [totalAttendance, setTotalAttendance] = useState(0);
 
   useEffect(() => {
@@ -31,7 +40,7 @@ const ReportScreen = ({ navigation }) => {
     if (sessions.length > 0 && selectedYear && selectedMonth !== null) {
       generateReport();
     }
-  }, [sessions, selectedYear, selectedMonth, employees]);
+  }, [sessions, selectedYear, selectedMonth, selectedDay, employees]);
 
   const loadData = async () => {
     const allSessions = await getAllSessions();
@@ -40,24 +49,27 @@ const ReportScreen = ({ navigation }) => {
     setSessions(allSessions);
     setEmployees(allEmployees);
 
-    // Get available years from sessions
-    const ethYears = [...new Set(allSessions.map(s => gregorianToEthiopian(s.date).year))];
-    setAvailableYears(ethYears.sort((a, b) => b - a));
-
     // Set default to current or most recent
     if (allSessions.length > 0) {
       const mostRecentSession = allSessions[allSessions.length - 1];
       const mostRecentEthDate = gregorianToEthiopian(mostRecentSession.date);
       setSelectedYear(mostRecentEthDate.year);
       setSelectedMonth(mostRecentEthDate.month);
+      setSelectedDay(null); // Show all days by default
+      setEthYear(mostRecentEthDate.year);
+      setEthMonth(mostRecentEthDate.month);
+      setEthDay(mostRecentEthDate.day);
     }
   };
 
   const generateReport = () => {
-    // Filter sessions by selected year and month
+    // Filter sessions by selected year, month, and day
     const filteredSessions = sessions.filter(session => {
       const ethDate = gregorianToEthiopian(session.date);
-      return ethDate.year === selectedYear && ethDate.month === selectedMonth && session.completed;
+      const yearMatch = ethDate.year === selectedYear;
+      const monthMatch = ethDate.month === selectedMonth;
+      const dayMatch = selectedDay === null || ethDate.day === selectedDay;
+      return yearMatch && monthMatch && dayMatch && session.completed;
     });
 
     // Count attendance by department
@@ -113,7 +125,12 @@ const ReportScreen = ({ navigation }) => {
         <View style={styles.filterContainer}>
           <TouchableOpacity
             style={styles.filterButton}
-            onPress={() => setShowYearPicker(!showYearPicker)}
+            onPress={() => {
+              setEthYear(selectedYear || currentEthDate.year);
+              setEthMonth(selectedMonth !== null ? selectedMonth : currentEthDate.month);
+              setEthDay(selectedDay === null ? 1 : selectedDay);
+              setShowEthYearPicker(true);
+            }}
           >
             <Text style={styles.filterLabel}>ዓመት:</Text>
             <Text style={styles.filterValue}>{selectedYear || 'Select'}</Text>
@@ -122,12 +139,31 @@ const ReportScreen = ({ navigation }) => {
 
           <TouchableOpacity
             style={styles.filterButton}
-            onPress={() => setShowMonthPicker(!showMonthPicker)}
+            onPress={() => {
+              setEthYear(selectedYear || currentEthDate.year);
+              setEthMonth(selectedMonth !== null ? selectedMonth : currentEthDate.month);
+              setEthDay(selectedDay === null ? 1 : selectedDay);
+              setShowEthMonthPicker(true);
+            }}
           >
             <Text style={styles.filterLabel}>ወር:</Text>
             <Text style={styles.filterValue}>
               {selectedMonth !== null ? ethiopianMonths[selectedMonth] : 'Select'}
             </Text>
+            <Text style={styles.filterArrow}>▼</Text>
+          </TouchableOpacity>
+
+          <TouchableOpacity
+            style={styles.filterButton}
+            onPress={() => {
+              setEthYear(selectedYear || currentEthDate.year);
+              setEthMonth(selectedMonth !== null ? selectedMonth : currentEthDate.month);
+              setEthDay(selectedDay === null ? 1 : selectedDay);
+              setShowEthDayPicker(true);
+            }}
+          >
+            <Text style={styles.filterLabel}>ቀን:</Text>
+            <Text style={styles.filterValue}>{selectedDay === null ? 'ሁሉም' : selectedDay}</Text>
             <Text style={styles.filterArrow}>▼</Text>
           </TouchableOpacity>
         </View>
@@ -166,36 +202,37 @@ const ReportScreen = ({ navigation }) => {
           )}
         </ScrollView>
 
-        {/* Year Picker Modal */}
+        {/* Ethiopian Year Picker */}
         <Modal
-          visible={showYearPicker}
+          visible={showEthYearPicker}
           transparent={true}
-          animationType="slide"
-          onRequestClose={() => setShowYearPicker(false)}
+          animationType="fade"
+          onRequestClose={() => setShowEthYearPicker(false)}
         >
           <TouchableOpacity
             style={styles.modalOverlay}
             activeOpacity={1}
-            onPress={() => setShowYearPicker(false)}
+            onPress={() => setShowEthYearPicker(false)}
           >
             <View style={styles.pickerModal}>
-              <Text style={styles.pickerTitle}>Select Year</Text>
-              <ScrollView style={styles.pickerScroll}>
-                {availableYears.map((year) => (
+              <Text style={styles.pickerTitle}>ዓመት ይምረጡ</Text>
+              <ScrollView style={styles.pickerScrollView}>
+                {getEthiopianYears(20).map(year => (
                   <TouchableOpacity
                     key={year}
                     style={[
                       styles.pickerItem,
-                      selectedYear === year && styles.pickerItemSelected
+                      ethYear === year && styles.pickerItemSelected
                     ]}
                     onPress={() => {
+                      setEthYear(year);
                       setSelectedYear(year);
-                      setShowYearPicker(false);
+                      setShowEthYearPicker(false);
                     }}
                   >
                     <Text style={[
                       styles.pickerItemText,
-                      selectedYear === year && styles.pickerItemTextSelected
+                      ethYear === year && styles.pickerItemTextSelected
                     ]}>
                       {year}
                     </Text>
@@ -206,38 +243,98 @@ const ReportScreen = ({ navigation }) => {
           </TouchableOpacity>
         </Modal>
 
-        {/* Month Picker Modal */}
+        {/* Ethiopian Month Picker */}
         <Modal
-          visible={showMonthPicker}
+          visible={showEthMonthPicker}
           transparent={true}
-          animationType="slide"
-          onRequestClose={() => setShowMonthPicker(false)}
+          animationType="fade"
+          onRequestClose={() => setShowEthMonthPicker(false)}
         >
           <TouchableOpacity
             style={styles.modalOverlay}
             activeOpacity={1}
-            onPress={() => setShowMonthPicker(false)}
+            onPress={() => setShowEthMonthPicker(false)}
           >
             <View style={styles.pickerModal}>
-              <Text style={styles.pickerTitle}>Select Month</Text>
-              <ScrollView style={styles.pickerScroll}>
+              <Text style={styles.pickerTitle}>ወር ይምረጡ</Text>
+              <ScrollView style={styles.pickerScrollView}>
                 {ethiopianMonths.map((month, index) => (
                   <TouchableOpacity
                     key={index}
                     style={[
                       styles.pickerItem,
-                      selectedMonth === index && styles.pickerItemSelected
+                      ethMonth === index && styles.pickerItemSelected
                     ]}
                     onPress={() => {
+                      setEthMonth(index);
+                      setEthDay(1); // Reset day to 1 when month changes
                       setSelectedMonth(index);
-                      setShowMonthPicker(false);
+                      setShowEthMonthPicker(false);
                     }}
                   >
                     <Text style={[
                       styles.pickerItemText,
-                      selectedMonth === index && styles.pickerItemTextSelected
+                      ethMonth === index && styles.pickerItemTextSelected
                     ]}>
                       {month}
+                    </Text>
+                  </TouchableOpacity>
+                ))}
+              </ScrollView>
+            </View>
+          </TouchableOpacity>
+        </Modal>
+
+        {/* Ethiopian Day Picker */}
+        <Modal
+          visible={showEthDayPicker}
+          transparent={true}
+          animationType="fade"
+          onRequestClose={() => setShowEthDayPicker(false)}
+        >
+          <TouchableOpacity
+            style={styles.modalOverlay}
+            activeOpacity={1}
+            onPress={() => setShowEthDayPicker(false)}
+          >
+            <View style={styles.pickerModal}>
+              <Text style={styles.pickerTitle}>ቀን ይምረጡ</Text>
+              <ScrollView style={styles.pickerScrollView}>
+                <TouchableOpacity
+                  style={[
+                    styles.pickerItem,
+                    selectedDay === null && styles.pickerItemSelected
+                  ]}
+                  onPress={() => {
+                    setSelectedDay(null);
+                    setShowEthDayPicker(false);
+                  }}
+                >
+                  <Text style={[
+                    styles.pickerItemText,
+                    selectedDay === null && styles.pickerItemTextSelected
+                  ]}>
+                    ሁሉም ቀናት (All Days)
+                  </Text>
+                </TouchableOpacity>
+                {getDaysInEthiopianMonth(ethMonth).map(day => (
+                  <TouchableOpacity
+                    key={day}
+                    style={[
+                      styles.pickerItem,
+                      ethDay === day && styles.pickerItemSelected
+                    ]}
+                    onPress={() => {
+                      setEthDay(day);
+                      setSelectedDay(day);
+                      setShowEthDayPicker(false);
+                    }}
+                  >
+                    <Text style={[
+                      styles.pickerItemText,
+                      ethDay === day && styles.pickerItemTextSelected
+                    ]}>
+                      {day}
                     </Text>
                   </TouchableOpacity>
                 ))}

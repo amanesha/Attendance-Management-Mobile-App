@@ -13,11 +13,13 @@ import {
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import DateTimePicker from '@react-native-community/datetimepicker';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import {
   getAllSessions,
   createSession,
   setActiveSession,
   deleteSession,
+  getAllEmployees,
 } from '../utils/storage';
 import {
   ethiopianMonths,
@@ -37,6 +39,8 @@ const MainScreen = ({ navigation }) => {
   const [filteredSessions, setFilteredSessions] = useState([]);
   const [showDatePicker, setShowDatePicker] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
+  const [expandedSessionId, setExpandedSessionId] = useState(null);
+  const [departmentStatsCache, setDepartmentStatsCache] = useState({});
 
   // Ethiopian date picker state
   const currentEthDate = getCurrentEthiopianDate();
@@ -50,9 +54,8 @@ const MainScreen = ({ navigation }) => {
   // Filter state (using Ethiopian calendar for filtering)
   const [selectedYear, setSelectedYear] = useState(getCurrentEthiopianDate().year);
   const [selectedMonth, setSelectedMonth] = useState(getCurrentEthiopianDate().month);
-  const [availableYears, setAvailableYears] = useState([]);
-  const [showYearPicker, setShowYearPicker] = useState(false);
-  const [showMonthPicker, setShowMonthPicker] = useState(false);
+  const [selectedDay, setSelectedDay] = useState(null); // null means "All days"
+  const [isFilterMode, setIsFilterMode] = useState(false); // Track if pickers are being used for filter or create
 
   useEffect(() => {
     loadSessions();
@@ -69,10 +72,6 @@ const MainScreen = ({ navigation }) => {
     const allSessions = await getAllSessions();
     setSessions(allSessions.reverse());
 
-    // Extract unique Ethiopian years from sessions
-    const ethYears = [...new Set(allSessions.map(s => gregorianToEthiopian(s.date).year))];
-    setAvailableYears(ethYears.sort((a, b) => b - a));
-
     if (allSessions.length > 0) {
       // Get the most recent session's Ethiopian date
       const mostRecentSession = allSessions[0];
@@ -81,27 +80,31 @@ const MainScreen = ({ navigation }) => {
       // Set filter to most recent session's month/year
       setSelectedYear(mostRecentEthDate.year);
       setSelectedMonth(mostRecentEthDate.month);
+      setSelectedDay(null); // Show all days by default
 
       // Filter sessions with the most recent date
-      filterSessions(allSessions, mostRecentEthDate.year, mostRecentEthDate.month);
+      filterSessions(allSessions, mostRecentEthDate.year, mostRecentEthDate.month, null);
     } else {
       setFilteredSessions([]);
     }
   };
 
-  const filterSessions = (allSessions, year, month) => {
+  const filterSessions = (allSessions, year, month, day) => {
     const filtered = allSessions.filter(session => {
       const ethDate = gregorianToEthiopian(session.date);
-      return ethDate.year === year && ethDate.month === month;
+      const yearMatch = ethDate.year === year;
+      const monthMatch = ethDate.month === month;
+      const dayMatch = day === null || ethDate.day === day;
+      return yearMatch && monthMatch && dayMatch;
     });
     setFilteredSessions(filtered);
   };
 
   useEffect(() => {
     if (sessions.length > 0) {
-      filterSessions(sessions, selectedYear, selectedMonth);
+      filterSessions(sessions, selectedYear, selectedMonth, selectedDay);
     }
-  }, [selectedYear, selectedMonth]);
+  }, [selectedYear, selectedMonth, selectedDay]);
 
   const onRefresh = async () => {
     setRefreshing(true);
@@ -114,6 +117,7 @@ const MainScreen = ({ navigation }) => {
     setEthYear(currentEth.year);
     setEthMonth(currentEth.month);
     setEthDay(currentEth.day);
+    setIsFilterMode(false); // Make sure we're in create mode, not filter mode
     setShowDatePicker(true);
   };
 
@@ -123,6 +127,12 @@ const MainScreen = ({ navigation }) => {
     const session = await createSession(gregorianDate.toISOString());
     if (session) {
       await setActiveSession(session);
+
+      // Update filter to show the newly created session
+      setSelectedYear(ethYear);
+      setSelectedMonth(ethMonth);
+      setSelectedDay(ethDay);
+
       await loadSessions();
       setShowDatePicker(false);
       navigation.navigate('AttendanceEntry');
@@ -159,32 +169,85 @@ const MainScreen = ({ navigation }) => {
         return;
       }
 
+      // Load all employees to get department info
+      const allEmployees = await getAllEmployees();
+      const employeeMap = {};
+      allEmployees.forEach(emp => {
+        if (emp.id) {
+          employeeMap[emp.id] = emp;
+        }
+      });
+
       // Create workbook
       const wb = XLSX.utils.book_new();
 
-      // ID Attendance Sheet
-      if (session.idAttendance.length > 0) {
-        const idData = session.idAttendance.map((item, index) => ({
-          No: index + 1,
-          ID: item.id,
-          Time: new Date(item.timestamp).toLocaleString(),
-        }));
-        const wsId = XLSX.utils.json_to_sheet(idData);
-        XLSX.utils.book_append_sheet(wb, wsId, 'ID Attendance');
-      }
+      // Group attendance by department
+      const departmentData = {};
 
-      // Forgot ID Attendance Sheet
-      if (session.forgotIdAttendance.length > 0) {
-        const forgotData = session.forgotIdAttendance.map((item, index) => ({
-          No: index + 1,
-          'Full Name': item.fullName || 'N/A',
-          Department: item.department || 'N/A',
-          'Phone Number': item.phoneNumber || 'N/A',
-          Time: new Date(item.timestamp).toLocaleString(),
-        }));
-        const wsForgot = XLSX.utils.json_to_sheet(forgotData);
-        XLSX.utils.book_append_sheet(wb, wsForgot, 'Forgot ID');
-      }
+      // Process ID attendance
+      session.idAttendance.forEach(attendance => {
+        const employee = employeeMap[attendance.id];
+        const dept = employee?.department || 'Unknown';
+
+        if (!departmentData[dept]) {
+          departmentData[dept] = [];
+        }
+
+        departmentData[dept].push({
+          No: departmentData[dept].length + 1,
+          ID: attendance.id,
+          'Full Name': employee?.fullName || 'N/A',
+          Department: dept,
+          'Phone Number': employee?.phoneNumber || 'N/A',
+          Time: new Date(attendance.timestamp).toLocaleString(),
+        });
+      });
+
+      // Process Forgot ID attendance
+      session.forgotIdAttendance.forEach(attendance => {
+        const dept = attendance.department || 'Unknown';
+
+        if (!departmentData[dept]) {
+          departmentData[dept] = [];
+        }
+
+        departmentData[dept].push({
+          No: departmentData[dept].length + 1,
+          ID: 'N/A',
+          'Full Name': attendance.fullName || 'N/A',
+          Department: dept,
+          'Phone Number': attendance.phoneNumber || 'N/A',
+          Time: new Date(attendance.timestamp).toLocaleString(),
+        });
+      });
+
+      // Create a summary sheet
+      const summaryData = Object.entries(departmentData)
+        .map(([dept, records]) => ({
+          Department: dept,
+          'Total Attendance': records.length,
+          Percentage: ((records.length / (session.idAttendance.length + session.forgotIdAttendance.length)) * 100).toFixed(1) + '%',
+        }))
+        .sort((a, b) => b['Total Attendance'] - a['Total Attendance']);
+
+      const wsSummary = XLSX.utils.json_to_sheet(summaryData);
+      XLSX.utils.book_append_sheet(wb, wsSummary, 'Summary');
+
+      // Create a sheet for each department
+      Object.entries(departmentData)
+        .sort(([deptA], [deptB]) => deptA.localeCompare(deptB))
+        .forEach(([dept, records]) => {
+          // Renumber the records for each department sheet
+          const numberedRecords = records.map((record, index) => ({
+            ...record,
+            No: index + 1,
+          }));
+
+          const ws = XLSX.utils.json_to_sheet(numberedRecords);
+          // Limit sheet name to 31 characters (Excel limitation)
+          const sheetName = dept.substring(0, 31);
+          XLSX.utils.book_append_sheet(wb, ws, sheetName);
+        });
 
       // Generate Excel file as base64
       const wbout = XLSX.write(wb, { type: 'base64', bookType: 'xlsx' });
@@ -219,42 +282,138 @@ const MainScreen = ({ navigation }) => {
     return date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
   };
 
+  const calculateDepartmentStats = async (session) => {
+    const allEmployees = await getAllEmployees();
+    const employeeMap = {};
+    allEmployees.forEach(emp => {
+      if (emp.id) {
+        employeeMap[emp.id] = emp;
+      }
+    });
+
+    const departmentCounts = {};
+    const totalCount = session.idAttendance.length + session.forgotIdAttendance.length;
+
+    // Process ID attendance
+    session.idAttendance.forEach(attendance => {
+      const employee = employeeMap[attendance.id];
+      const dept = employee?.department || 'Unknown';
+      departmentCounts[dept] = (departmentCounts[dept] || 0) + 1;
+    });
+
+    // Process Forgot ID attendance
+    session.forgotIdAttendance.forEach(attendance => {
+      const dept = attendance.department || 'Unknown';
+      departmentCounts[dept] = (departmentCounts[dept] || 0) + 1;
+    });
+
+    // Convert to array and sort by count
+    return Object.entries(departmentCounts)
+      .map(([dept, count]) => ({
+        department: dept,
+        count: count,
+        percentage: ((count / totalCount) * 100).toFixed(1),
+      }))
+      .sort((a, b) => b.count - a.count);
+  };
+
+  const toggleSessionExpansion = (sessionId) => {
+    setExpandedSessionId(expandedSessionId === sessionId ? null : sessionId);
+  };
+
   const renderSession = ({ item }) => {
     const totalCount = item.idAttendance.length + item.forgotIdAttendance.length;
+    const isExpanded = expandedSessionId === item.id;
+    const departmentStats = departmentStatsCache[item.id] || [];
+
     // Show creation time for in-progress, completion time for finished sessions
     const displayTime = item.completed && item.completedAt
       ? formatTime(item.completedAt)
       : formatTime(item.createdAt || item.date);
 
-    return (
-      <TouchableOpacity
-        style={styles.sessionCard}
-        onPress={() => handleSessionPress(item)}
-        activeOpacity={0.7}
-      >
-        <View style={styles.sessionHeader}>
-          <View>
-            <Text style={styles.sessionDate}>{formatDate(item.date)}</Text>
-            <Text style={styles.sessionStatus}>
-              {item.completed ? `✓ ተጠናቀቀ ${displayTime}` : `⏱ በሂደት ላይ ${displayTime}`}
-            </Text>
-          </View>
-          <View style={styles.sessionStats}>
-            <Text style={styles.sessionTotal}>{totalCount}</Text>
-            <Text style={styles.sessionTotalLabel}>ጠቅላላ</Text>
-          </View>
-        </View>
+    const handleDropdownToggle = async () => {
+      if (!isExpanded && totalCount > 0 && !departmentStatsCache[item.id]) {
+        const stats = await calculateDepartmentStats(item);
+        setDepartmentStatsCache(prev => ({
+          ...prev,
+          [item.id]: stats
+        }));
+      }
+      toggleSessionExpansion(item.id);
+    };
 
-        <View style={styles.sessionCounts}>
-          <View style={styles.countBox}>
-            <Text style={styles.countNumber}>{item.idAttendance.length}</Text>
-            <Text style={styles.countLabel}>መታወቂያ ያላቸው</Text>
+    return (
+      <View style={styles.sessionCard}>
+        <TouchableOpacity
+          onPress={() => handleSessionPress(item)}
+          activeOpacity={0.7}
+        >
+          <View style={styles.sessionHeader}>
+            <View style={styles.sessionDateContainer}>
+              <Text style={styles.sessionDate}>{formatDate(item.date)}</Text>
+              <Text style={styles.sessionStatus}>
+                {item.completed ? `✓ ተጠናቀቀ ${displayTime}` : `⏱ በሂደት ላይ ${displayTime}`}
+              </Text>
+            </View>
+            <View style={styles.sessionStats}>
+              <Text style={styles.sessionTotal}>{totalCount}</Text>
+              <Text style={styles.sessionTotalLabel}>ጠቅላላ</Text>
+            </View>
           </View>
-          <View style={styles.countBox}>
-            <Text style={styles.countNumber}>{item.forgotIdAttendance.length}</Text>
-            <Text style={styles.countLabel}>መታወቂያ የረሱ</Text>
+
+          <View style={styles.sessionCounts}>
+            <View style={styles.countBox}>
+              <Text style={styles.countNumber}>{item.idAttendance.length}</Text>
+              <Text style={styles.countLabel}>መታወቂያ ያላቸው</Text>
+            </View>
+            <View style={styles.countBox}>
+              <Text style={styles.countNumber}>{item.forgotIdAttendance.length}</Text>
+              <Text style={styles.countLabel}>መታወቂያ የረሱ</Text>
+            </View>
           </View>
-        </View>
+        </TouchableOpacity>
+
+        {totalCount > 0 && (
+          <TouchableOpacity
+            style={styles.dropdownToggle}
+            onPress={handleDropdownToggle}
+            activeOpacity={0.7}
+          >
+            <Text style={styles.dropdownToggleText}>
+              {isExpanded ? '▲ Hide Department Summary' : '▼ Show Department Summary'}
+            </Text>
+          </TouchableOpacity>
+        )}
+
+        {isExpanded && departmentStats.length > 0 && (
+          <View style={styles.departmentSummary}>
+            <View style={styles.summaryHeader}>
+              <Text style={styles.summaryTitle}>Department Summary</Text>
+            </View>
+
+            <View style={styles.tableContainer}>
+              <View style={styles.tableHeader}>
+                <Text style={[styles.tableHeaderText, styles.deptColumn]}>Department</Text>
+                <Text style={[styles.tableHeaderText, styles.countColumn]}>Total</Text>
+                <Text style={[styles.tableHeaderText, styles.percentColumn]}>Percentage</Text>
+              </View>
+
+              {departmentStats.map((stat, index) => (
+                <View
+                  key={index}
+                  style={[
+                    styles.tableRow,
+                    index % 2 === 0 && styles.tableRowEven
+                  ]}
+                >
+                  <Text style={[styles.tableCell, styles.deptColumn]}>{stat.department}</Text>
+                  <Text style={[styles.tableCell, styles.countColumn]}>{stat.count}</Text>
+                  <Text style={[styles.tableCell, styles.percentColumn]}>{stat.percentage}%</Text>
+                </View>
+              ))}
+            </View>
+          </View>
+        )}
 
         <View style={styles.sessionActions}>
           <TouchableOpacity
@@ -279,7 +438,29 @@ const MainScreen = ({ navigation }) => {
             <Text style={styles.deleteButtonText}>🗑 ሰርዝ</Text>
           </TouchableOpacity>
         </View>
-      </TouchableOpacity>
+      </View>
+    );
+  };
+
+  const handleLogout = () => {
+    Alert.alert(
+      'Logout',
+      'Are you sure you want to logout?',
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Logout',
+          style: 'destructive',
+          onPress: async () => {
+            try {
+              await AsyncStorage.removeItem('@user_authenticated');
+              navigation.replace('Login');
+            } catch (error) {
+              Alert.alert('Error', 'Failed to logout');
+            }
+          },
+        },
+      ]
     );
   };
 
@@ -287,10 +468,20 @@ const MainScreen = ({ navigation }) => {
     <SafeAreaView style={styles.safeArea} edges={['top', 'bottom']}>
       <View style={styles.container}>
       <View style={styles.header}>
-        <Text style={styles.headerTitle}>የምዝገባ ክፍለ ጊዜዎች</Text>
-        <Text style={styles.headerSubtitle}>
-          ጠቅላላ {sessions.length} {sessions.length === 1 ? 'ክፍለ ጊዜ' : 'ክፍለ ጊዜዎች'}
-        </Text>
+        <View style={styles.headerTopRow}>
+          <View style={styles.headerTitleContainer}>
+            <Text style={styles.headerTitle}>የምዝገባ ክፍለ ጊዜዎች</Text>
+            <Text style={styles.headerSubtitle}>
+              ጠቅላላ {sessions.length} {sessions.length === 1 ? 'ክፍለ ጊዜ' : 'ክፍለ ጊዜዎች'}
+            </Text>
+          </View>
+          <TouchableOpacity
+            style={styles.logoutButton}
+            onPress={handleLogout}
+          >
+            <Text style={styles.logoutButtonText}>⎋ Logout</Text>
+          </TouchableOpacity>
+        </View>
 
         {/* Action Buttons */}
         <View style={styles.actionButtonsRow}>
@@ -314,7 +505,13 @@ const MainScreen = ({ navigation }) => {
       <View style={styles.filterContainer}>
         <TouchableOpacity
           style={styles.filterButton}
-          onPress={() => setShowYearPicker(!showYearPicker)}
+          onPress={() => {
+            setIsFilterMode(true);
+            setEthYear(selectedYear);
+            setEthMonth(selectedMonth);
+            setEthDay(selectedDay === null ? 1 : selectedDay);
+            setShowEthYearPicker(true);
+          }}
         >
           <Text style={styles.filterLabel}>ዓመት:</Text>
           <Text style={styles.filterValue}>{selectedYear}</Text>
@@ -323,97 +520,40 @@ const MainScreen = ({ navigation }) => {
 
         <TouchableOpacity
           style={styles.filterButton}
-          onPress={() => setShowMonthPicker(!showMonthPicker)}
+          onPress={() => {
+            setIsFilterMode(true);
+            setEthYear(selectedYear);
+            setEthMonth(selectedMonth);
+            setEthDay(selectedDay === null ? 1 : selectedDay);
+            setShowEthMonthPicker(true);
+          }}
         >
           <Text style={styles.filterLabel}>ወር:</Text>
           <Text style={styles.filterValue}>{ethiopianMonths[selectedMonth]}</Text>
           <Text style={styles.filterArrow}>▼</Text>
         </TouchableOpacity>
 
+        <TouchableOpacity
+          style={styles.filterButton}
+          onPress={() => {
+            setIsFilterMode(true);
+            setEthYear(selectedYear);
+            setEthMonth(selectedMonth);
+            setEthDay(selectedDay === null ? 1 : selectedDay);
+            setShowEthDayPicker(true);
+          }}
+        >
+          <Text style={styles.filterLabel}>ቀን:</Text>
+          <Text style={styles.filterValue}>{selectedDay === null ? 'ሁሉም' : selectedDay}</Text>
+          <Text style={styles.filterArrow}>▼</Text>
+        </TouchableOpacity>
+
         <View style={styles.filterInfo}>
           <Text style={styles.filterInfoText}>
-            {filteredSessions.length} {filteredSessions.length === 1 ? 'ክፍለ ጊዜ' : 'ክፍለ ጊዜዎች'}
+            {filteredSessions.length}
           </Text>
         </View>
       </View>
-
-      {/* Year Picker Modal */}
-      <Modal
-        visible={showYearPicker}
-        transparent={true}
-        animationType="fade"
-        onRequestClose={() => setShowYearPicker(false)}
-      >
-        <TouchableOpacity
-          style={styles.modalOverlay}
-          activeOpacity={1}
-          onPress={() => setShowYearPicker(false)}
-        >
-          <View style={styles.pickerModal}>
-            <Text style={styles.pickerTitle}>ዓመት ይምረጡ</Text>
-            {availableYears.map(year => (
-              <TouchableOpacity
-                key={year}
-                style={[
-                  styles.pickerItem,
-                  selectedYear === year && styles.pickerItemSelected
-                ]}
-                onPress={() => {
-                  setSelectedYear(year);
-                  setShowYearPicker(false);
-                }}
-              >
-                <Text style={[
-                  styles.pickerItemText,
-                  selectedYear === year && styles.pickerItemTextSelected
-                ]}>
-                  {year}
-                </Text>
-              </TouchableOpacity>
-            ))}
-          </View>
-        </TouchableOpacity>
-      </Modal>
-
-      {/* Month Picker Modal */}
-      <Modal
-        visible={showMonthPicker}
-        transparent={true}
-        animationType="fade"
-        onRequestClose={() => setShowMonthPicker(false)}
-      >
-        <TouchableOpacity
-          style={styles.modalOverlay}
-          activeOpacity={1}
-          onPress={() => setShowMonthPicker(false)}
-        >
-          <View style={styles.pickerModal}>
-            <Text style={styles.pickerTitle}>ወር ይምረጡ</Text>
-            <ScrollView style={styles.pickerScrollView}>
-              {ethiopianMonths.map((month, index) => (
-                <TouchableOpacity
-                  key={index}
-                  style={[
-                    styles.pickerItem,
-                    selectedMonth === index && styles.pickerItemSelected
-                  ]}
-                  onPress={() => {
-                    setSelectedMonth(index);
-                    setShowMonthPicker(false);
-                  }}
-                >
-                  <Text style={[
-                    styles.pickerItemText,
-                    selectedMonth === index && styles.pickerItemTextSelected
-                  ]}>
-                    {month}
-                  </Text>
-                </TouchableOpacity>
-              ))}
-            </ScrollView>
-          </View>
-        </TouchableOpacity>
-      </Modal>
 
       <FlatList
         data={filteredSessions}
@@ -521,6 +661,10 @@ const MainScreen = ({ navigation }) => {
                   ]}
                   onPress={() => {
                     setEthYear(year);
+                    if (isFilterMode) {
+                      setSelectedYear(year);
+                      setIsFilterMode(false);
+                    }
                     setShowEthYearPicker(false);
                   }}
                 >
@@ -562,6 +706,10 @@ const MainScreen = ({ navigation }) => {
                   onPress={() => {
                     setEthMonth(index);
                     setEthDay(1); // Reset day to 1 when month changes
+                    if (isFilterMode) {
+                      setSelectedMonth(index);
+                      setIsFilterMode(false);
+                    }
                     setShowEthMonthPicker(false);
                   }}
                 >
@@ -593,6 +741,26 @@ const MainScreen = ({ navigation }) => {
           <View style={styles.pickerModal}>
             <Text style={styles.pickerTitle}>ቀን ይምረጡ</Text>
             <ScrollView style={styles.pickerScrollView}>
+              {isFilterMode && (
+                <TouchableOpacity
+                  style={[
+                    styles.pickerItem,
+                    selectedDay === null && styles.pickerItemSelected
+                  ]}
+                  onPress={() => {
+                    setSelectedDay(null);
+                    setIsFilterMode(false);
+                    setShowEthDayPicker(false);
+                  }}
+                >
+                  <Text style={[
+                    styles.pickerItemText,
+                    selectedDay === null && styles.pickerItemTextSelected
+                  ]}>
+                    ሁሉም ቀናት (All Days)
+                  </Text>
+                </TouchableOpacity>
+              )}
               {getDaysInEthiopianMonth(ethMonth).map(day => (
                 <TouchableOpacity
                   key={day}
@@ -602,6 +770,10 @@ const MainScreen = ({ navigation }) => {
                   ]}
                   onPress={() => {
                     setEthDay(day);
+                    if (isFilterMode) {
+                      setSelectedDay(day);
+                      setIsFilterMode(false);
+                    }
                     setShowEthDayPicker(false);
                   }}
                 >
@@ -637,6 +809,15 @@ const styles = StyleSheet.create({
     paddingBottom: 30,
     paddingHorizontal: 20,
   },
+  headerTopRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'flex-start',
+    marginBottom: 12,
+  },
+  headerTitleContainer: {
+    flex: 1,
+  },
   headerTitle: {
     fontSize: 28,
     fontWeight: 'bold',
@@ -646,7 +827,22 @@ const styles = StyleSheet.create({
   headerSubtitle: {
     fontSize: 14,
     color: '#93c5fd',
-    marginBottom: 12,
+  },
+  logoutButton: {
+    backgroundColor: '#ef4444',
+    borderRadius: 8,
+    paddingVertical: 8,
+    paddingHorizontal: 12,
+    shadowColor: '#ef4444',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.3,
+    shadowRadius: 4,
+    elevation: 4,
+  },
+  logoutButtonText: {
+    fontSize: 14,
+    fontWeight: '600',
+    color: '#ffffff',
   },
   actionButtonsRow: {
     flexDirection: 'row',
@@ -697,6 +893,9 @@ const styles = StyleSheet.create({
     borderBottomWidth: 1,
     borderBottomColor: '#e2e8f0',
   },
+  sessionDateContainer: {
+    flex: 1,
+  },
   sessionDate: {
     fontSize: 18,
     fontWeight: 'bold',
@@ -718,6 +917,26 @@ const styles = StyleSheet.create({
   sessionTotalLabel: {
     fontSize: 12,
     color: '#64748b',
+  },
+  dropdownIndicator: {
+    fontSize: 12,
+    color: '#3b82f6',
+    marginTop: 4,
+  },
+  dropdownToggle: {
+    backgroundColor: '#eff6ff',
+    paddingVertical: 10,
+    paddingHorizontal: 16,
+    borderRadius: 8,
+    alignItems: 'center',
+    marginBottom: 12,
+    borderWidth: 1,
+    borderColor: '#bfdbfe',
+  },
+  dropdownToggleText: {
+    fontSize: 13,
+    fontWeight: '600',
+    color: '#1e3a8a',
   },
   sessionCounts: {
     flexDirection: 'row',
@@ -1008,6 +1227,62 @@ const styles = StyleSheet.create({
     fontSize: 16,
     fontWeight: 'bold',
     color: '#ffffff',
+  },
+  departmentSummary: {
+    marginTop: 16,
+    paddingTop: 16,
+    borderTopWidth: 1,
+    borderTopColor: '#e2e8f0',
+  },
+  summaryHeader: {
+    marginBottom: 12,
+  },
+  summaryTitle: {
+    fontSize: 16,
+    fontWeight: 'bold',
+    color: '#1e293b',
+  },
+  tableContainer: {
+    backgroundColor: '#f8fafc',
+    borderRadius: 8,
+    overflow: 'hidden',
+    marginBottom: 12,
+  },
+  tableHeader: {
+    flexDirection: 'row',
+    backgroundColor: '#3b82f6',
+    paddingVertical: 12,
+    paddingHorizontal: 8,
+  },
+  tableHeaderText: {
+    fontSize: 13,
+    fontWeight: 'bold',
+    color: '#ffffff',
+  },
+  tableRow: {
+    flexDirection: 'row',
+    paddingVertical: 10,
+    paddingHorizontal: 8,
+    borderBottomWidth: 1,
+    borderBottomColor: '#e2e8f0',
+  },
+  tableRowEven: {
+    backgroundColor: '#ffffff',
+  },
+  tableCell: {
+    fontSize: 13,
+    color: '#1e293b',
+  },
+  deptColumn: {
+    flex: 2,
+  },
+  countColumn: {
+    flex: 1,
+    textAlign: 'center',
+  },
+  percentColumn: {
+    flex: 1,
+    textAlign: 'right',
   },
 });
 

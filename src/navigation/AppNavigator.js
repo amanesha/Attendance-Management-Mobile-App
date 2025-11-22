@@ -2,6 +2,7 @@ import React from 'react';
 import { createStackNavigator } from '@react-navigation/stack';
 
 import SplashScreen from '../screens/SplashScreen';
+import LoginScreen from '../screens/LoginScreen';
 import MainScreen from '../screens/MainScreen';
 import AttendanceEntryScreen from '../screens/AttendanceEntryScreen';
 import ReportScreen from '../screens/ReportScreen';
@@ -15,8 +16,10 @@ const AppNavigator = () => {
       screenOptions={{
         headerShown: false,
       }}
+      initialRouteName="Splash"
     >
       <Stack.Screen name="Splash" component={SplashScreen} />
+      <Stack.Screen name="Login" component={LoginScreen} />
       <Stack.Screen name="Main" component={MainScreen} />
       <Stack.Screen
         name="AttendanceEntry"

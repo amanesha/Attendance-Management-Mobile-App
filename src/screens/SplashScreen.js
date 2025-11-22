@@ -1,14 +1,17 @@
-import React, { useEffect } from 'react';
+import React, { useEffect, useState } from 'react';
 import { View, Text, StyleSheet, Animated, Dimensions, Image, ImageBackground } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 
 const { width, height } = Dimensions.get('window');
 
 const SplashScreen = ({ navigation }) => {
   const fadeAnim = new Animated.Value(0);
   const scaleAnim = new Animated.Value(0.3);
+  const [logoError, setLogoError] = useState(false);
 
   useEffect(() => {
+    // Start animations
     Animated.parallel([
       Animated.timing(fadeAnim, {
         toValue: 1,
@@ -22,12 +25,30 @@ const SplashScreen = ({ navigation }) => {
       }),
     ]).start();
 
-    const timer = setTimeout(() => {
-      navigation.replace('Main');
-    }, 2500);
+    // Check authentication and navigate after delay
+    const checkAuthAndNavigate = async () => {
+      try {
+        const isAuthenticated = await AsyncStorage.getItem('@user_authenticated');
 
-    return () => clearTimeout(timer);
-  }, []);
+        // Wait for 3 seconds to show splash screen
+        setTimeout(() => {
+          if (isAuthenticated === 'true') {
+            navigation.replace('Main');
+          } else {
+            navigation.replace('Login');
+          }
+        }, 3000); // 3 second delay
+      } catch (error) {
+        console.error('Error checking authentication:', error);
+        // Navigate to Login on error
+        setTimeout(() => {
+          navigation.replace('Login');
+        }, 3000);
+      }
+    };
+
+    checkAuthAndNavigate();
+  }, [navigation]);
 
   return (
     <SafeAreaView style={styles.container} edges={['top', 'bottom']}>
@@ -46,11 +67,18 @@ const SplashScreen = ({ navigation }) => {
               },
             ]}
           >
-            <Image
-              source={require('../../assets/logo.png')}
-              style={styles.logo}
-              resizeMode="contain"
-            />
+            {!logoError ? (
+              <Image
+                source={require('../../assets/logo.png')}
+                style={styles.logo}
+                resizeMode="contain"
+                onError={() => setLogoError(true)}
+              />
+            ) : (
+              <View style={styles.logoPlaceholder}>
+                <Text style={styles.logoPlaceholderText}>📋</Text>
+              </View>
+            )}
             <Text style={styles.title}>Attendance System</Text>
             <Text style={styles.subtitle}>Professional & Simple</Text>
           </Animated.View>
@@ -87,6 +115,20 @@ const styles = StyleSheet.create({
     width: 200,
     height: 200,
     marginBottom: 30,
+  },
+  logoPlaceholder: {
+    width: 200,
+    height: 200,
+    marginBottom: 30,
+    backgroundColor: 'rgba(255, 255, 255, 0.2)',
+    borderRadius: 100,
+    justifyContent: 'center',
+    alignItems: 'center',
+    borderWidth: 3,
+    borderColor: 'rgba(255, 255, 255, 0.4)',
+  },
+  logoPlaceholderText: {
+    fontSize: 100,
   },
   title: {
     fontSize: 32,

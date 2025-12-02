@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import {
   View,
   Text,
@@ -11,8 +11,13 @@ import {
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { getAllSessions, getAllEmployees, getEmployeeById } from '../utils/storage';
 import { gregorianToEthiopian, ethiopianMonths, getDaysInEthiopianMonth, getEthiopianYears, getCurrentEthiopianDate } from '../utils/ethiopianCalendar';
+import { captureRef } from 'react-native-view-shot';
+import * as Sharing from 'expo-sharing';
+import * as Print from 'expo-print';
+import * as FileSystem from 'expo-file-system';
 
 const ReportScreen = ({ navigation }) => {
+  const reportRef = useRef(null);
   const [reportData, setReportData] = useState([]);
   const [sessions, setSessions] = useState([]);
   const [employees, setEmployees] = useState([]);
@@ -110,6 +115,117 @@ const ReportScreen = ({ navigation }) => {
     setTotalAttendance(total);
   };
 
+  const handleShareImage = async () => {
+    try {
+      if (!reportRef.current) {
+        Alert.alert('Error', 'Report view not ready');
+        return;
+      }
+
+      // Capture the view as image
+      const uri = await captureRef(reportRef.current, {
+        format: 'png',
+        quality: 1.0,
+        result: 'tmpfile',
+      });
+
+      // Share directly without copying
+      await Sharing.shareAsync(uri, {
+        mimeType: 'image/png',
+        dialogTitle: 'Share Attendance Report',
+      });
+    } catch (error) {
+      console.error('Image share error:', error);
+      Alert.alert('Error', 'Failed to share image: ' + error.message);
+    }
+  };
+
+  const handleSharePDF = async () => {
+    try {
+      const monthName = selectedMonth !== null ? ethiopianMonths[selectedMonth] : 'Report';
+      const periodText = `${monthName} ${selectedYear}${selectedDay !== null ? ` - Day ${selectedDay}` : ''}`;
+
+      const htmlContent = `
+        <!DOCTYPE html>
+        <html>
+        <head>
+          <meta charset="utf-8">
+          <meta name="viewport" content="width=device-width, initial-scale=1.0">
+          <style>
+            body { font-family: Arial, sans-serif; padding: 20px; }
+            .header { text-align: center; margin-bottom: 30px; border-bottom: 3px solid #1e3a8a; padding-bottom: 20px; }
+            .title { font-size: 28px; font-weight: bold; color: #1e3a8a; margin-bottom: 10px; }
+            .subtitle { font-size: 14px; color: #64748b; }
+            .period { background: #dbeafe; padding: 15px; border-radius: 8px; margin-bottom: 20px; }
+            .period-title { font-weight: bold; color: #1e3a8a; }
+            .summary { background: #3b82f6; color: white; padding: 20px; border-radius: 12px; text-align: center; margin-bottom: 30px; }
+            .summary-number { font-size: 48px; font-weight: bold; margin: 10px 0; }
+            .table { width: 100%; border-collapse: collapse; margin-top: 20px; }
+            .table th { background: #1e3a8a; color: white; padding: 12px; text-align: left; }
+            .table td { border-bottom: 1px solid #e2e8f0; padding: 12px; }
+            .table tr:hover { background: #f8fafc; }
+            .footer { margin-top: 40px; text-align: center; color: #64748b; font-size: 12px; border-top: 1px solid #e2e8f0; padding-top: 20px; }
+          </style>
+        </head>
+        <body>
+          <div class="header">
+            <div class="title">ATTENDANCE REPORT</div>
+            <div class="subtitle">የተገኝነት ሪፖርት</div>
+          </div>
+
+          <div class="period">
+            <div class="period-title">Report Period:</div>
+            <div>${periodText}</div>
+          </div>
+
+          <div class="summary">
+            <div style="font-size: 14px; opacity: 0.9;">Total Attendance</div>
+            <div class="summary-number">${totalAttendance}</div>
+          </div>
+
+          <h3 style="color: #1e3a8a;">By Department (በክፍል)</h3>
+          <table class="table">
+            <thead>
+              <tr>
+                <th>Department</th>
+                <th>Count</th>
+                <th>Percentage</th>
+              </tr>
+            </thead>
+            <tbody>
+              ${reportData.map(item => `
+                <tr>
+                  <td><strong>${item.department}</strong></td>
+                  <td>${item.count}</td>
+                  <td>${item.percentage}%</td>
+                </tr>
+              `).join('')}
+            </tbody>
+          </table>
+
+          <div class="footer">
+            Generated on ${new Date().toLocaleString()}<br>
+            Attendance Management System
+          </div>
+        </body>
+        </html>
+      `;
+
+      const { uri } = await Print.printToFileAsync({
+        html: htmlContent,
+        base64: false
+      });
+
+      await Sharing.shareAsync(uri, {
+        mimeType: 'application/pdf',
+        dialogTitle: 'Share Attendance Report PDF',
+        UTI: 'com.adobe.pdf',
+      });
+    } catch (error) {
+      Alert.alert('Error', 'Failed to share PDF: ' + error.message);
+    }
+  };
+
   return (
     <SafeAreaView style={styles.safeArea} edges={['top', 'bottom']}>
       <View style={styles.container}>
@@ -120,6 +236,20 @@ const ReportScreen = ({ navigation }) => {
           <Text style={styles.headerTitle}>Attendance Report</Text>
           <Text style={styles.headerSubtitle}>የተገኝነት ሪፖርት</Text>
         </View>
+
+        {/* Share Buttons */}
+        {reportData.length > 0 && (
+          <View style={styles.topShareButtons}>
+            <TouchableOpacity style={styles.topShareButton} onPress={handleShareImage}>
+              <Text style={styles.shareIcon}>📸</Text>
+              <Text style={styles.topShareButtonText}>Image</Text>
+            </TouchableOpacity>
+            <TouchableOpacity style={[styles.topShareButton, styles.topPdfButton]} onPress={handleSharePDF}>
+              <Text style={styles.shareIcon}>📄</Text>
+              <Text style={styles.topShareButtonText}>PDF</Text>
+            </TouchableOpacity>
+          </View>
+        )}
 
         {/* Filter Section */}
         <View style={styles.filterContainer}>
@@ -201,6 +331,54 @@ const ReportScreen = ({ navigation }) => {
             ))
           )}
         </ScrollView>
+
+        {/* Hidden view for image capture - non-scrollable flat version */}
+        <View style={styles.hiddenContainer}>
+          <View ref={reportRef} collapsable={false} style={styles.captureView}>
+            {/* Header */}
+            <View style={styles.captureHeader}>
+              <Text style={styles.captureTitle}>📋 ATTENDANCE REPORT</Text>
+              <Text style={styles.captureSubtitle}>የተገኝነት ሪፖርት</Text>
+            </View>
+
+            {/* Period */}
+            <View style={styles.capturePeriod}>
+              <Text style={styles.capturePeriodText}>
+                {selectedMonth !== null ? ethiopianMonths[selectedMonth] : ''} {selectedYear}
+                {selectedDay !== null ? ` - Day ${selectedDay}` : ' - All Days'}
+              </Text>
+            </View>
+
+            {/* Total */}
+            <View style={styles.captureSummary}>
+              <Text style={styles.captureSummaryLabel}>Total Attendance</Text>
+              <Text style={styles.captureSummaryNumber}>{totalAttendance}</Text>
+            </View>
+
+            {/* Department Table */}
+            <View style={styles.captureTable}>
+              <View style={styles.captureTableHeader}>
+                <Text style={[styles.captureTableHeaderText, { flex: 2 }]}>Department</Text>
+                <Text style={[styles.captureTableHeaderText, { flex: 1, textAlign: 'center' }]}>Count</Text>
+                <Text style={[styles.captureTableHeaderText, { flex: 1, textAlign: 'right' }]}>%</Text>
+              </View>
+              {reportData.map((item, index) => (
+                <View key={index} style={styles.captureTableRow}>
+                  <Text style={[styles.captureTableCell, { flex: 2 }]}>{item.department}</Text>
+                  <Text style={[styles.captureTableCell, { flex: 1, textAlign: 'center' }]}>{item.count}</Text>
+                  <Text style={[styles.captureTableCell, { flex: 1, textAlign: 'right' }]}>{item.percentage}%</Text>
+                </View>
+              ))}
+            </View>
+
+            {/* Footer */}
+            <View style={styles.captureFooter}>
+              <Text style={styles.captureFooterText}>
+                Generated: {new Date().toLocaleDateString()}
+              </Text>
+            </View>
+          </View>
+        </View>
 
         {/* Ethiopian Year Picker */}
         <Modal
@@ -379,9 +557,41 @@ const styles = StyleSheet.create({
     fontSize: 14,
     color: '#93c5fd',
   },
+  topShareButtons: {
+    flexDirection: 'row',
+    paddingHorizontal: 16,
+    paddingTop: 16,
+    paddingBottom: 8,
+    gap: 12,
+  },
+  topShareButton: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: '#10b981',
+    paddingVertical: 10,
+    paddingHorizontal: 16,
+    borderRadius: 10,
+    shadowColor: '#10b981',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.2,
+    shadowRadius: 3,
+    elevation: 3,
+  },
+  topPdfButton: {
+    backgroundColor: '#ef4444',
+    shadowColor: '#ef4444',
+  },
+  topShareButtonText: {
+    color: '#ffffff',
+    fontSize: 13,
+    fontWeight: '600',
+  },
   filterContainer: {
     flexDirection: 'row',
     padding: 16,
+    paddingTop: 8,
     gap: 12,
   },
   filterButton: {
@@ -544,6 +754,137 @@ const styles = StyleSheet.create({
   pickerItemTextSelected: {
     color: '#3b82f6',
     fontWeight: '600',
+  },
+  shareButtonsContainer: {
+    flexDirection: 'row',
+    padding: 16,
+    gap: 12,
+    backgroundColor: '#ffffff',
+    borderTopWidth: 1,
+    borderTopColor: '#e2e8f0',
+  },
+  shareButton: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: '#10b981',
+    paddingVertical: 14,
+    paddingHorizontal: 20,
+    borderRadius: 12,
+    shadowColor: '#10b981',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.3,
+    shadowRadius: 4,
+    elevation: 4,
+  },
+  pdfButton: {
+    backgroundColor: '#ef4444',
+    shadowColor: '#ef4444',
+  },
+  shareIcon: {
+    fontSize: 20,
+    marginRight: 8,
+  },
+  shareButtonText: {
+    color: '#ffffff',
+    fontSize: 14,
+    fontWeight: '600',
+  },
+  hiddenContainer: {
+    position: 'absolute',
+    left: -9999,
+    top: 0,
+    opacity: 0,
+  },
+  captureView: {
+    width: 800,
+    backgroundColor: '#ffffff',
+    padding: 30,
+    minHeight: 'auto',
+  },
+  captureHeader: {
+    alignItems: 'center',
+    marginBottom: 20,
+    borderBottomWidth: 3,
+    borderBottomColor: '#1e3a8a',
+    paddingBottom: 15,
+  },
+  captureTitle: {
+    fontSize: 24,
+    fontWeight: 'bold',
+    color: '#1e3a8a',
+    marginBottom: 5,
+  },
+  captureSubtitle: {
+    fontSize: 14,
+    color: '#64748b',
+  },
+  capturePeriod: {
+    backgroundColor: '#dbeafe',
+    padding: 12,
+    borderRadius: 8,
+    marginBottom: 20,
+    alignItems: 'center',
+  },
+  capturePeriodText: {
+    fontSize: 16,
+    fontWeight: '600',
+    color: '#1e3a8a',
+  },
+  captureSummary: {
+    backgroundColor: '#3b82f6',
+    padding: 20,
+    borderRadius: 12,
+    alignItems: 'center',
+    marginBottom: 25,
+  },
+  captureSummaryLabel: {
+    fontSize: 14,
+    color: '#dbeafe',
+    marginBottom: 8,
+  },
+  captureSummaryNumber: {
+    fontSize: 42,
+    fontWeight: 'bold',
+    color: '#ffffff',
+  },
+  captureTable: {
+    marginBottom: 20,
+  },
+  captureTableHeader: {
+    flexDirection: 'row',
+    backgroundColor: '#1e3a8a',
+    padding: 12,
+    borderTopLeftRadius: 8,
+    borderTopRightRadius: 8,
+  },
+  captureTableHeaderText: {
+    color: '#ffffff',
+    fontWeight: 'bold',
+    fontSize: 14,
+  },
+  captureTableRow: {
+    flexDirection: 'row',
+    padding: 12,
+    borderBottomWidth: 1,
+    borderBottomColor: '#e2e8f0',
+    backgroundColor: '#ffffff',
+  },
+  captureTableCell: {
+    fontSize: 13,
+    color: '#1e293b',
+  },
+  captureFooter: {
+    marginTop: 20,
+    paddingTop: 15,
+    borderTopWidth: 1,
+    borderTopColor: '#e2e8f0',
+    alignItems: 'center',
+  },
+  captureFooterText: {
+    fontSize: 11,
+    color: '#64748b',
   },
 });
 
